@@ -91,3 +91,27 @@ def test_dayfirst_dates():
     )
     df = standardize(raw, suggest_mapping(raw.columns), dayfirst=True)
     assert df["date"].iloc[0] == pd.Timestamp("2025-01-31")
+
+
+def test_iso_dates_are_not_affected_by_dayfirst():
+    raw = pd.DataFrame(
+        {
+            "pedido": ["1", "2"],
+            "fecha": ["2025-03-04 10:30:00", "2025-12-01"],
+            "cliente": ["A", "A"],
+            "cantidad": [1, 1],
+            "precio": [5.0, 5.0],
+        }
+    )
+    for dayfirst in (True, False):
+        df = standardize(raw, suggest_mapping(raw.columns), dayfirst=dayfirst)
+        assert df["date"].tolist() == [pd.Timestamp("2025-03-04 10:30"), pd.Timestamp("2025-12-01")]
+
+
+def test_ambiguous_dates_follow_dayfirst():
+    raw = pd.DataFrame(
+        {"pedido": ["1"], "fecha": ["03/04/2025"], "cliente": ["A"], "cantidad": [1], "precio": [5.0]}
+    )
+    mapping = suggest_mapping(raw.columns)
+    assert standardize(raw, mapping, dayfirst=True)["date"].iloc[0] == pd.Timestamp("2025-04-03")
+    assert standardize(raw, mapping, dayfirst=False)["date"].iloc[0] == pd.Timestamp("2025-03-04")
