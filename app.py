@@ -10,7 +10,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src import loader, metrics
+from src import loader, metrics, segmentation
 
 SAMPLE_PATH = Path(__file__).parent / "data" / "sample_online_retail.csv"
 SOURCE_SAMPLE = "Datos de ejemplo"
@@ -46,6 +46,11 @@ def prepare(raw: pd.DataFrame, mapping: dict, dayfirst: bool, retail_codes: bool
     df = loader.standardize(raw, mapping, dayfirst=dayfirst)
     codes = loader.RETAIL_NON_PRODUCT_CODES if retail_codes else None
     return loader.clean(df, exclude_product_codes=codes)
+
+
+@st.cache_data(ttl=900, max_entries=10, show_spinner="Agrupando clientes...")
+def cached_groups(rfm: pd.DataFrame, k: int):
+    return segmentation.kmeans_groups(rfm, k)
 
 
 # ------------------------------------------------------------------ gráficos
@@ -109,6 +114,41 @@ def chart_countries(countries: pd.DataFrame, symbol: str) -> go.Figure:
         yaxis_title=f"Ventas netas ({symbol})",
         margin=dict(t=50, b=10),
     )
+    return fig
+
+
+def chart_segments(summary: pd.DataFrame) -> go.Figure:
+    fig = go.Figure(
+        [
+            go.Bar(x=summary["segment"], y=summary["customers_share"] * 100, name="% de clientes", marker_color=GREY),
+            go.Bar(x=summary["segment"], y=summary["sales_share"] * 100, name="% de las ventas", marker_color=BLUE),
+        ]
+    )
+    fig.update_layout(
+        title="Peso de cada segmento: clientes frente a ventas",
+        barmode="group",
+        yaxis_title="%",
+        legend=dict(orientation="h", y=1.12),
+        margin=dict(t=70, b=10),
+    )
+    return fig
+
+
+def chart_groups(result: pd.DataFrame, symbol: str) -> go.Figure:
+    fig = go.Figure()
+    for group, part in result.groupby("group"):
+        fig.add_trace(
+            go.Scatter(
+                x=part["frequency"],
+                y=part["monetary"],
+                mode="markers",
+                name=f"Grupo {group}",
+                marker=dict(size=5, opacity=0.6),
+            )
+        )
+    fig.update_xaxes(type="log", title="Pedidos por cliente (escala logarítmica)")
+    fig.update_yaxes(type="log", title=f"Valor neto ({symbol}, escala logarítmica)")
+    fig.update_layout(title="Clientes por grupo", margin=dict(t=50, b=10))
     return fig
 
 
@@ -204,7 +244,9 @@ if not incomplete.empty:
     st.info(f"Mes incompleto ({months}): aparece en gris y no se usa para comparar con el mes anterior.")
 
 # ------------------------------------------------------------------- pestañas
-tab_sales, tab_products, tab_customers, tab_countries = st.tabs(["Ventas", "Productos", "Clientes", "Países"])
+tab_sales, tab_products, tab_customers, tab_segments, tab_countries = st.tabs(
+    ["Ventas", "Productos", "Clientes", "Segmentos", "Países"]
+)
 
 with tab_sales:
     st.plotly_chart(chart_monthly(monthly, symbol), width="stretch")
@@ -226,6 +268,87 @@ with tab_customers:
         st.caption("El primer mes de los datos no se muestra: todos los clientes parecerían nuevos.")
     except ValueError as error:
         st.info(str(error))
+
+with tab_segments:
+    try:
+        rfm = segmentation.rfm_segments(df)
+    except ValueError as error:
+        st.info(str(error))
+    else:
+        summary = segmentation.segment_summary(rfm)
+        best = summary.loc[summary["sales_share"].idxmax()]
+        st.markdown(
+            f"**{best['segment']}**: el {percent(best['customers_share'])} de los clientes "
+            f"genera el {percent(best['sales_share'])} de las ventas."
+        )
+        excluded = kpis["customers"] - len(rfm)
+        st.caption(
+            "Segmentación RFM: cada cliente puntúa de 1 a 5 según lo reciente de su última compra (R) "
+            "y su frecuencia (F); 5 es el 20 % mejor."
+            + (f" Se excluyen {integer(excluded)} clientes que devolvieron más de lo que compraron." if excluded else "")
+        )
+        st.plotly_chart(chart_segments(summary), width="stretch")
+
+        shown = pd.DataFrame(
+            {
+                "Segmento": summary["segment"],
+                "Clientes": summary["customers"],
+                "% clientes": (summary["customers_share"] * 100).round(1),
+                f"Ventas netas ({symbol})": summary["sales"].round(0),
+                "% ventas": (summary["sales_share"] * 100).round(1),
+                "Días desde la última compra": summary["recency"].round(0),
+                "Pedidos por cliente": summary["frequency"].round(1),
+                "Qué hacer": summary["action"],
+            }
+        )
+        st.dataframe(shown, hide_index=True, width="stretch")
+
+        export = rfm.reset_index()[
+            ["customer_id", "segment", "recency", "frequency", "monetary", "r_score", "f_score", "m_score"]
+        ]
+        export["segment"] = export["segment"].astype(str)
+        export.columns = [
+            "cliente", "segmento", "dias_desde_ultima_compra", "pedidos",
+            "valor_neto", "puntuacion_r", "puntuacion_f", "puntuacion_m",
+        ]
+        st.download_button(
+            "Descargar clientes con su segmento (CSV)",
+            export.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+            file_name="clientes_segmentados.csv",
+            mime="text/csv",
+        )
+
+        with st.expander("Agrupación automática con K-Means (avanzado)"):
+            st.write(
+                "Agrupa a los clientes por su comportamiento (recencia, frecuencia y valor) sin reglas "
+                "previas. El grupo 1 es siempre el que más gasta."
+            )
+            k = st.slider("Número de grupos", 2, 8, 4)
+            try:
+                result, profile, silhouette = cached_groups(rfm, k)
+            except ValueError as error:
+                st.info(str(error))
+            else:
+                st.caption(
+                    f"Coeficiente de silueta: {silhouette:.2f}".replace(".", ",")
+                    + " (de -1 a 1; cuanto más alto, más separados están los grupos)."
+                )
+                st.plotly_chart(chart_groups(result, symbol), width="stretch")
+                st.dataframe(
+                    pd.DataFrame(
+                        {
+                            "Grupo": profile["group"],
+                            "Clientes": profile["customers"],
+                            f"Ventas netas ({symbol})": profile["sales"].round(0),
+                            "% ventas": (profile["sales_share"] * 100).round(1),
+                            "Días desde la última compra (mediana)": profile["recency"].round(0),
+                            "Pedidos (mediana)": profile["frequency"],
+                            f"Valor neto ({symbol}, mediana)": profile["monetary"].round(0),
+                        }
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
 
 with tab_countries:
     try:
