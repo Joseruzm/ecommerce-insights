@@ -17,9 +17,12 @@ def df() -> pd.DataFrame:
         ("o1", "2025-01-02", "A", 2, 10.0, "SKU1", "Taza", "ES"),
         ("o2", "2025-01-30", "B", 1, 25.0, "SKU2", "Vaso", "ES"),
         ("o3", "2025-02-05", "A", 1, 10.0, "SKU1", "Taza", "ES"),
+        ("r1", "2025-02-20", "A", -1, 10.0, "SKU1", "Taza", "ES"),  # devolución
         ("o4", "2025-02-27", "C", 3, 5.0, "SKU3", "Plato", "FR"),
         ("o5", "2025-03-03", "C", 1, 5.0, "SKU3", "Plato", "FR"),
-        ("o6", "2025-03-08", "D", 2, 10.0, "SKU1", "Taza", "ES"),
+        ("o7", "2025-03-04", "D", 100, 1.0, "SKU4", "Fantasma", "ES"),  # pedido erróneo...
+        ("r2", "2025-03-04", "D", -100, 1.0, "SKU4", "Fantasma", "ES"),  # ...anulado al momento
+        ("o6", "2025-03-08", "D", 3, 10.0, "SKU1", "Taza", "ES"),
     ]
     out = pd.DataFrame(
         rows,
@@ -33,8 +36,9 @@ def df() -> pd.DataFrame:
 
 def test_monthly_sales_values_and_incomplete_last_month(df):
     monthly = monthly_sales(df)
-    assert monthly["sales"].tolist() == [45.0, 25.0, 25.0]
-    assert monthly["orders"].tolist() == [2, 2, 2]
+    assert monthly["sales"].tolist() == [45.0, 15.0, 35.0]  # netas
+    assert monthly["returns"].tolist() == [0.0, 10.0, 100.0]
+    assert monthly["orders"].tolist() == [2, 2, 3]  # solo compras
     assert monthly["customers"].tolist() == [2, 2, 2]
     # Los datos acaban el 8 de marzo: marzo está incompleto.
     assert monthly["complete"].tolist() == [True, True, False]
@@ -59,24 +63,35 @@ def test_monthly_sales_fills_gaps_with_zeros():
 
 def test_kpi_summary(df):
     kpis = kpi_summary(df)
-    assert kpis["total_sales"] == 95.0
-    assert kpis["orders"] == 6
+    assert kpis["total_sales"] == 95.0  # netas: 205 de compras - 110 devueltos
+    assert kpis["gross_sales"] == 205.0
+    assert kpis["returns"] == 110.0
+    assert kpis["return_rate"] == pytest.approx(110 / 205)
+    assert kpis["orders"] == 7
     assert kpis["customers"] == 4
-    assert kpis["avg_order_value"] == pytest.approx(95 / 6)
-    # Último mes completo: febrero (25) frente a enero (45).
+    assert kpis["avg_order_value"] == pytest.approx(205 / 7)
+    # Último mes completo: febrero (15 netas) frente a enero (45).
     assert kpis["last_month"] == pd.Timestamp("2025-02-01")
-    assert kpis["last_month_sales"] == 25.0
-    assert kpis["mom_change"] == pytest.approx(25 / 45 - 1)
+    assert kpis["last_month_sales"] == 15.0
+    assert kpis["mom_change"] == pytest.approx(15 / 45 - 1)
 
 
 def test_top_products_by_sales_and_units(df):
     by_sales = top_products(df, n=2)
     assert by_sales["product_id"].tolist() == ["SKU1", "SKU2"]
     assert by_sales.loc[0, "product"] == "Taza"
-    assert by_sales.loc[0, "sales"] == 50.0
+    assert by_sales.loc[0, "sales"] == 50.0  # 60 vendidos - 10 devueltos
 
     by_units = top_products(df, n=3, by="units")
     assert by_units["product_id"].tolist() == ["SKU1", "SKU3", "SKU2"]
+
+
+def test_top_products_does_not_rank_cancelled_sales(df):
+    everything = top_products(df, n=10)
+    ghost = everything[everything["product_id"] == "SKU4"].iloc[0]
+    assert ghost["sales"] == 0.0
+    assert ghost["units"] == 0
+    assert everything["product_id"].iloc[-1] == "SKU4"
 
 
 def test_top_products_requires_product_column(df):
