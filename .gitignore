@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Datos y notebooks
+data/raw/
+*.parquet
+.ipynb_checkpoints/
+
+# Editor
+.vscode/
