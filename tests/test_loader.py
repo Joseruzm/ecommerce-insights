@@ -60,21 +60,22 @@ def test_standardize_normalizes_customer_id():
     assert df["customer_id"].isna().sum() == 2
 
 
-def test_clean_removes_bad_rows_and_reports_reasons():
+def test_clean_removes_bad_rows_but_keeps_returns():
     raw = make_raw()
     df = standardize(raw, suggest_mapping(raw.columns))
     out, report = clean(df, exclude_product_codes=RETAIL_NON_PRODUCT_CODES)
 
-    # Solo sobreviven las dos primeras líneas (factura 1001).
-    assert len(out) == 2
+    # Sobreviven las dos líneas de compra y la devolución de la factura C1002.
+    assert len(out) == 3
     assert report.rows_in == 7
-    assert report.rows_out == 2
-    assert report.removed_total == 5
+    assert report.rows_out == 3
+    assert report.removed_total == 4
     assert report.removed["Sin identificador de cliente"] == 2
-    assert report.removed["Devoluciones o cancelaciones (cantidad <= 0)"] == 1
     assert report.removed["Precio <= 0 (regalos, ajustes)"] == 1
     assert report.removed["Conceptos que no son productos (envío, comisiones...)"] == 1
-    assert out["amount"].tolist() == [30.0, 6.0]
+    assert report.returns_kept == 1
+    assert out["is_return"].tolist() == [False, False, True]
+    assert out["amount"].tolist() == [30.0, 6.0, -30.0]  # la devolución resta
 
 
 def test_load_csv_handles_semicolons_and_decimal_comma():

@@ -60,6 +60,7 @@ class CleaningReport:
     rows_in: int
     removed: dict[str, int] = field(default_factory=dict)
     rows_out: int = 0
+    returns_kept: int = 0  # líneas de devolución que se conservan (cantidad negativa)
 
     @property
     def removed_total(self) -> int:
@@ -153,16 +154,22 @@ def clean(
     """Elimina filas que falsean un análisis de ventas y devuelve un informe.
 
     Las reglas se aplican en orden y cada fila se cuenta en la primera regla que
-    la elimina. Añade la columna 'amount' (cantidad * precio unitario).
-    Las devoluciones se descartan en vez de restarse: es lo habitual para RFM y
-    previsión de demanda, y queda documentado en el informe.
+    la elimina.
+
+    Las devoluciones y cancelaciones (cantidad negativa) NO se eliminan: se
+    conservan marcadas en la columna 'is_return' y con importe negativo en
+    'amount'. Así las métricas pueden restarlas de las ventas. Descartarlas
+    inflaba las ventas (en Online Retail II, un 6 %) y dejaba pedidos que se
+    anularon minutos después, como si se hubieran vendido.
+
+    Añade las columnas 'amount' (cantidad * precio unitario) e 'is_return'.
     """
     report = CleaningReport(rows_in=len(df))
     rules = [
         ("Fecha, cantidad o precio no válidos",
          lambda x: x["date"].isna() | x["quantity"].isna() | x["unit_price"].isna()),
         ("Sin identificador de cliente", lambda x: x["customer_id"].isna()),
-        ("Devoluciones o cancelaciones (cantidad <= 0)", lambda x: x["quantity"] <= 0),
+        ("Cantidad igual a 0", lambda x: x["quantity"] == 0),
         ("Precio <= 0 (regalos, ajustes)", lambda x: x["unit_price"] <= 0),
     ]
     if exclude_product_codes and "product_id" in df.columns:
@@ -180,6 +187,10 @@ def clean(
         report.removed[reason] = int(mask.sum())
         out = out.loc[~mask]
 
-    out = out.assign(amount=out["quantity"] * out["unit_price"]).reset_index(drop=True)
+    out = out.assign(
+        amount=out["quantity"] * out["unit_price"],
+        is_return=out["quantity"] < 0,
+    ).reset_index(drop=True)
     report.rows_out = len(out)
+    report.returns_kept = int(out["is_return"].sum())
     return out, report

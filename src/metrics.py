@@ -4,6 +4,10 @@ Todas las funciones reciben el DataFrame que devuelve loader.clean(), con las
 columnas: order_id, date, customer_id, quantity, unit_price, amount y,
 opcionalmente, product_id, product_name y country. Devuelven DataFrames o
 diccionarios sencillos que la interfaz de Streamlit puede pintar directamente.
+
+Criterio con las devoluciones (líneas con cantidad negativa):
+- Las ventas son NETAS: las devoluciones se restan en el mes en que ocurren.
+- Los pedidos, los clientes y los nuevos/recurrentes cuentan solo compras.
 """
 from __future__ import annotations
 
@@ -19,21 +23,34 @@ def _month_start(dates: pd.Series) -> pd.Series:
     return dates.dt.to_period("M").dt.to_timestamp()
 
 
-def monthly_sales(df: pd.DataFrame, tolerance_days: int = 3) -> pd.DataFrame:
-    """Ventas, pedidos y clientes activos por mes.
+def _is_return(df: pd.DataFrame) -> pd.Series:
+    return df["quantity"] < 0
 
-    Devuelve una fila por mes (los meses sin ventas aparecen con ceros) y una
-    columna 'complete' que marca si el mes está completo. Solo el primer y el
-    último mes pueden estar incompletos: se consideran incompletos si los datos
-    empiezan o terminan a más de 'tolerance_days' días del límite del mes. Un
-    último mes incompleto no debe usarse para previsión ni para comparar.
+
+def monthly_sales(df: pd.DataFrame, tolerance_days: int = 3) -> pd.DataFrame:
+    """Ventas netas, devoluciones, pedidos y clientes activos por mes.
+
+    Columnas: month, sales (netas), returns (importe devuelto, en positivo),
+    orders y customers (solo compras) y complete.
+
+    Devuelve una fila por mes (los meses sin ventas aparecen con ceros). La
+    columna 'complete' marca si el mes está completo: solo el primer y el último
+    mes pueden estar incompletos, si los datos empiezan o terminan a más de
+    'tolerance_days' días del límite del mes. Un último mes incompleto no debe
+    usarse para previsión ni para comparar.
     """
     _require_data(df)
     data = df.assign(month=_month_start(df["date"]))
-    out = data.groupby("month").agg(
-        sales=("amount", "sum"),
-        orders=("order_id", "nunique"),
-        customers=("customer_id", "nunique"),
+    is_return = _is_return(data)
+    purchases, returns = data[~is_return], data[is_return]
+
+    out = pd.DataFrame(
+        {
+            "sales": data.groupby("month")["amount"].sum(),
+            "returns": -returns.groupby("month")["amount"].sum(),
+            "orders": purchases.groupby("month")["order_id"].nunique(),
+            "customers": purchases.groupby("month")["customer_id"].nunique(),
+        }
     )
     full_range = pd.date_range(out.index.min(), out.index.max(), freq="MS")
     out = out.reindex(full_range).fillna(0)
@@ -55,18 +72,30 @@ def monthly_sales(df: pd.DataFrame, tolerance_days: int = 3) -> pd.DataFrame:
 def kpi_summary(df: pd.DataFrame) -> dict:
     """Cifras principales para las tarjetas del dashboard.
 
-    'mom_change' compara el último mes completo con el anterior (None si no hay
-    dos meses completos consecutivos).
+    - total_sales: ventas netas (compras menos devoluciones).
+    - gross_sales / returns / return_rate: ventas antes de devoluciones, importe
+      devuelto y porcentaje que suponen.
+    - avg_order_value: ticket medio, calculado sobre las compras (antes de
+      devoluciones).
+    - mom_change: variación del último mes completo frente al anterior
+      (None si no hay dos meses completos consecutivos).
     """
     _require_data(df)
-    total = float(df["amount"].sum())
-    orders = int(df["order_id"].nunique())
+    is_return = _is_return(df)
+    purchases = df[~is_return]
+
+    gross = float(purchases["amount"].sum())
+    returned = float(-df.loc[is_return, "amount"].sum())
+    orders = int(purchases["order_id"].nunique())
 
     summary = {
-        "total_sales": total,
+        "total_sales": float(df["amount"].sum()),
+        "gross_sales": gross,
+        "returns": returned,
+        "return_rate": returned / gross if gross else 0.0,
         "orders": orders,
-        "customers": int(df["customer_id"].nunique()),
-        "avg_order_value": total / orders if orders else 0.0,
+        "customers": int(purchases["customer_id"].nunique()),
+        "avg_order_value": gross / orders if orders else 0.0,
         "start": df["date"].min(),
         "end": df["date"].max(),
         "last_month": None,
@@ -88,10 +117,12 @@ def kpi_summary(df: pd.DataFrame) -> dict:
 
 
 def top_products(df: pd.DataFrame, n: int = 10, by: str = "sales") -> pd.DataFrame:
-    """Los n productos que más venden, por importe ('sales') o unidades ('units').
+    """Los n productos que más venden, por importe neto ('sales') o unidades netas ('units').
 
-    Agrupa por código de producto si existe (así los cambios de descripción no
-    duplican filas) y muestra el nombre más frecuente de cada código.
+    Las devoluciones se restan, así que un producto vendido y devuelto no aparece
+    arriba. Agrupa por código de producto si existe (así los cambios de
+    descripción no duplican filas) y muestra el nombre más frecuente de cada
+    código. 'orders' cuenta pedidos de compra.
     """
     _require_data(df)
     if by not in ("sales", "units"):
@@ -104,11 +135,9 @@ def top_products(df: pd.DataFrame, n: int = 10, by: str = "sales") -> pd.DataFra
     else:
         raise ValueError("El archivo no tiene columna de producto.")
 
-    grouped = df.groupby(key).agg(
-        sales=("amount", "sum"),
-        units=("quantity", "sum"),
-        orders=("order_id", "nunique"),
-    )
+    grouped = df.groupby(key).agg(sales=("amount", "sum"), units=("quantity", "sum"))
+    grouped["orders"] = df[~_is_return(df)].groupby(key)["order_id"].nunique()
+    grouped["orders"] = grouped["orders"].fillna(0).astype(int)
 
     if key == "product_id" and "product_name" in df.columns:
         names = (
@@ -132,14 +161,20 @@ def top_products(df: pd.DataFrame, n: int = 10, by: str = "sales") -> pd.DataFra
 
 
 def new_vs_returning(df: pd.DataFrame, skip_first_month: bool = True) -> pd.DataFrame:
-    """Clientes nuevos y recurrentes en cada mes.
+    """Clientes nuevos y recurrentes en cada mes (solo cuentan compras).
 
     Un cliente es nuevo en el mes de su primera compra y recurrente en los
     siguientes. En el primer mes de los datos todos parecerían nuevos porque no
     hay historial anterior, así que por defecto ese mes se omite.
     """
     _require_data(df)
-    data = pd.DataFrame({"customer_id": df["customer_id"], "month": _month_start(df["date"])})
+    purchases = df[~_is_return(df)]
+    if purchases.empty:
+        raise ValueError("No hay compras que analizar.")
+
+    data = pd.DataFrame(
+        {"customer_id": purchases["customer_id"], "month": _month_start(purchases["date"])}
+    )
     first_month = data.groupby("customer_id")["month"].min().rename("first_month")
     active = data.drop_duplicates(["customer_id", "month"]).join(first_month, on="customer_id")
     active["is_new"] = active["month"] == active["first_month"]
@@ -154,22 +189,25 @@ def new_vs_returning(df: pd.DataFrame, skip_first_month: bool = True) -> pd.Data
 
 
 def sales_by_country(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
-    """Ventas y clientes por país; los países fuera del top n se agrupan en 'Otros'."""
+    """Ventas netas y clientes por país; los países fuera del top n se agrupan en 'Otros'."""
     _require_data(df)
     if "country" not in df.columns:
         raise ValueError("El archivo no tiene columna de país.")
 
-    by_country = (
-        df.groupby("country")
-        .agg(sales=("amount", "sum"), customers=("customer_id", "nunique"))
-        .sort_values("sales", ascending=False)
-    )
+    purchases = df[~_is_return(df)]
+    by_country = df.groupby("country").agg(sales=("amount", "sum"))
+    by_country["customers"] = purchases.groupby("country")["customer_id"].nunique()
+    by_country["customers"] = by_country["customers"].fillna(0).astype(int)
+    by_country = by_country.sort_values("sales", ascending=False)
+
     top, rest = by_country.head(n), by_country.iloc[n:]
     if not rest.empty:
         others = pd.DataFrame(
             {
                 "sales": [rest["sales"].sum()],
-                "customers": [df.loc[df["country"].isin(rest.index), "customer_id"].nunique()],
+                "customers": [
+                    purchases.loc[purchases["country"].isin(rest.index), "customer_id"].nunique()
+                ],
             },
             index=["Otros"],
         )
