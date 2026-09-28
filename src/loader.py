@@ -123,10 +123,30 @@ def _clean_id(series: pd.Series) -> pd.Series:
     return s.mask(empty)
 
 
+def _parse_dates(series: pd.Series, dayfirst: bool) -> pd.Series:
+    """Convierte a fecha sin equivocarse con el formato.
+
+    Las fechas ISO (2025-03-04 o 2025-03-04 10:30:00) se leen siempre como año-mes-día:
+    'dayfirst' solo se aplica al resto de formatos (31/01/2025). Las que no se
+    puedan leer quedan como NaT y clean() las descarta.
+    """
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series
+    text = series.astype("string").str.strip()
+    present = text.dropna()
+    if len(present) and present.str.match(r"^\d{4}-\d{2}-\d{2}").mean() > 0.9:
+        return pd.to_datetime(text, format="ISO8601", errors="coerce")
+    parsed = pd.to_datetime(text, errors="coerce", dayfirst=dayfirst)
+    if parsed.isna().mean() > text.isna().mean() + 0.05:  # formatos mezclados
+        parsed = pd.to_datetime(text, errors="coerce", dayfirst=dayfirst, format="mixed")
+    return parsed
+
+
 def standardize(raw: pd.DataFrame, mapping: dict[str, str], dayfirst: bool = False) -> pd.DataFrame:
     """Renombra las columnas al esquema interno y convierte los tipos.
 
-    dayfirst=True para fechas tipo 31/01/2025 (día antes que mes).
+    dayfirst=True para fechas tipo 31/01/2025 (día antes que mes). Las fechas en
+    formato ISO (2025-01-31) se leen bien con cualquier valor.
     """
     missing = [FIELD_LABELS[f] for f in REQUIRED_FIELDS if f not in mapping]
     if missing:
@@ -138,7 +158,7 @@ def standardize(raw: pd.DataFrame, mapping: dict[str, str], dayfirst: bool = Fal
     df = pd.DataFrame({internal: raw[column] for internal, column in mapping.items()})
     df["order_id"] = df["order_id"].astype("string").str.strip()
     df["customer_id"] = _clean_id(df["customer_id"])
-    df["date"] = pd.to_datetime(df["date"], errors="coerce", dayfirst=dayfirst)
+    df["date"] = _parse_dates(df["date"], dayfirst)
     for column in ("quantity", "unit_price"):
         df[column] = pd.to_numeric(df[column], errors="coerce")
     if "product_id" in df.columns:
