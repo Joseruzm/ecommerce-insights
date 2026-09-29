@@ -10,7 +10,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src import loader, metrics, segmentation
+from src import forecast, loader, metrics, segmentation
 
 SAMPLE_PATH = Path(__file__).parent / "data" / "sample_online_retail.csv"
 SOURCE_SAMPLE = "Datos de ejemplo"
@@ -51,6 +51,11 @@ def prepare(raw: pd.DataFrame, mapping: dict, dayfirst: bool, retail_codes: bool
 @st.cache_data(ttl=900, max_entries=10, show_spinner="Agrupando clientes...")
 def cached_groups(rfm: pd.DataFrame, k: int):
     return segmentation.kmeans_groups(rfm, k)
+
+
+@st.cache_data(ttl=900, max_entries=10, show_spinner="Calculando la previsión...")
+def cached_forecast(monthly: pd.DataFrame, horizon: int):
+    return forecast.forecast_sales(monthly, horizon)
 
 
 # ------------------------------------------------------------------ gráficos
@@ -152,6 +157,51 @@ def chart_groups(result: pd.DataFrame, symbol: str) -> go.Figure:
     return fig
 
 
+def chart_forecast(result: "forecast.ForecastResult", symbol: str) -> go.Figure:
+    history, fc, test = result.history, result.forecast, result.last_test
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(x=history.index, y=history.values, name="Ventas reales", mode="lines+markers", line=dict(color=BLUE))
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=list(fc["month"]) + list(fc["month"][::-1]),
+            y=list(fc["upper"]) + list(fc["lower"][::-1]),
+            fill="toself",
+            fillcolor="rgba(255,127,14,0.15)",
+            line=dict(width=0),
+            name="Rango probable (80 %)",
+            hoverinfo="skip",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[history.index[-1]] + list(fc["month"]),
+            y=[history.iloc[-1]] + list(fc["forecast"]),
+            name="Previsión",
+            mode="lines+markers",
+            line=dict(color="#FF7F0E", dash="dash"),
+        )
+    )
+    if not test.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=test["month"],
+                y=test["predicted"],
+                name="Lo que habría previsto el modelo",
+                mode="markers",
+                marker=dict(symbol="x", size=11, color="#2CA02C"),
+            )
+        )
+    fig.update_layout(
+        title="Ventas netas mensuales y previsión",
+        yaxis_title=f"Ventas netas ({symbol})",
+        legend=dict(orientation="h", y=1.15),
+        margin=dict(t=80, b=10),
+    )
+    return fig
+
+
 # ------------------------------------------------------------- entrada de datos
 st.title("📊 Ecommerce Insights")
 st.write(
@@ -244,12 +294,83 @@ if not incomplete.empty:
     st.info(f"Mes incompleto ({months}): aparece en gris y no se usa para comparar con el mes anterior.")
 
 # ------------------------------------------------------------------- pestañas
-tab_sales, tab_products, tab_customers, tab_segments, tab_countries = st.tabs(
-    ["Ventas", "Productos", "Clientes", "Segmentos", "Países"]
+tab_sales, tab_forecast, tab_products, tab_customers, tab_segments, tab_countries = st.tabs(
+    ["Ventas", "Previsión", "Productos", "Clientes", "Segmentos", "Países"]
 )
 
 with tab_sales:
     st.plotly_chart(chart_monthly(monthly, symbol), width="stretch")
+
+with tab_forecast:
+    horizon = st.slider("Meses a prever", 1, 6, 3)
+    try:
+        result = cached_forecast(monthly, horizon)
+    except ValueError as error:
+        st.info(str(error))
+    else:
+        total = result.forecast["forecast"].sum()
+        period = "el próximo mes" if horizon == 1 else f"los próximos {horizon} meses"
+        st.markdown(f"**Ventas previstas para {period}: {money(total, symbol)}**")
+        st.caption(f"Método elegido: {result.model_label}.")
+
+        if result.best_wape is not None:
+            cols = st.columns(3)
+            cols[0].metric(
+                "Error medio de esta previsión",
+                percent(result.best_wape),
+                help="Se calcula previendo los últimos meses como si no se conocieran y comparando con lo que ocurrió.",
+            )
+            if result.baseline_wape is not None:
+                cols[1].metric("Error de la media de los últimos 3 meses", percent(result.baseline_wape))
+            if result.improvement is not None:
+                cols[2].metric("Reducción del error", percent(max(result.improvement, 0.0)))
+
+        st.plotly_chart(chart_forecast(result, symbol), width="stretch")
+
+        if not incomplete.empty and result.forecast["month"].iloc[0] == incomplete.iloc[-1]:
+            st.caption(
+                f"El mes en curso ({incomplete.iloc[-1]:%Y-%m}) tiene datos solo hasta el {kpis['end']:%d/%m/%Y} "
+                "y no se usa para entrenar; la previsión lo incluye como primer mes."
+            )
+        for note in result.notes:
+            st.info(note)
+
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Mes": result.forecast["month"].dt.strftime("%Y-%m"),
+                    f"Previsión ({symbol})": result.forecast["forecast"].round(0),
+                    "Mínimo probable": result.forecast["lower"].round(0),
+                    "Máximo probable": result.forecast["upper"].round(0),
+                }
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+
+        with st.expander("Cómo se ha evaluado"):
+            st.write(
+                "Se prueban varios métodos, del más simple al más complejo. A cada uno se le esconden los "
+                "últimos meses: se entrena con lo anterior, se prevé y se compara con lo que pasó de verdad. "
+                "Gana el que menos se equivoca. El rango probable se calcula con los errores de esas pruebas "
+                "(el 80 % de las veces el error fue menor que el que indica el rango)."
+            )
+            evaluation = result.backtest
+            st.dataframe(
+                pd.DataFrame(
+                    {
+                        "Método": evaluation["label"],
+                        "Error medio": [percent(w) if ok else "No evaluable (poco historial)" for w, ok in zip(evaluation["wape"], evaluation["evaluated"])],
+                        "Sesgo": [f"{b * 100:+.1f} %".replace(".", ",") if ok else "" for b, ok in zip(evaluation["bias"], evaluation["evaluated"])],
+                    }
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+            st.caption(
+                "Sesgo: si es negativo, el método tiende a quedarse corto; si es positivo, a pasarse. "
+                f"Las pruebas cubren los últimos {forecast.MAX_FOLDS + forecast.BACKTEST_HORIZON - 1} meses de datos."
+            )
 
 with tab_products:
     try:
