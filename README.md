@@ -5,10 +5,10 @@ y una previsión de la demanda futura
 
 **Demo en vivo:** (futuro enlace)
 
-![Captura del dashboard](docs/screenshot.png)
+![Captura del dashboard](assets/screenshot.png)
 
 ## Problema resuelto
-(Una o dos frases en lenguaje de negocio: qué decisiones ayuda a tomar.)
+Elimina horas de análisis manual en hojas de cálculo y aporta claridad financiera inmediata, facilitando a los responsables de negocio planificar el aprovisionamiento de catálogo con antelación y diseñar estrategias de fidelización personalizadas según el comportamiento real de compra.
 
 ## Funcionalidades
 - Dashboard de ventas, ticket medio y top productos
