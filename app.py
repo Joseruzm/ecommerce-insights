@@ -23,6 +23,19 @@ TAGLINE = "Convierte el CSV de tu tienda online en decisiones."
 VIOLET, CORAL, TEAL, AMBER, GREY = "#6C4DF6", "#E8482A", "#0B8B7C", "#C77D00", "#8F89AD"
 ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
 
+# Monedas del desplegable: símbolo o código -> nombre. Para añadir una, una línea más.
+CURRENCIES = {
+    "€": "€ · Euro",
+    "£": "£ · Libra esterlina",
+    "$": "$ · Dólar estadounidense",
+    "CHF": "CHF · Franco suizo",
+    "MXN": "MXN · Peso mexicano",
+    "COP": "COP · Peso colombiano",
+    "ARS": "ARS · Peso argentino",
+    "CLP": "CLP · Peso chileno",
+    "PEN": "PEN · Sol peruano",
+}
+
 st.set_page_config(
     page_title=APP_NAME,
     page_icon=str(ICON_PATH) if ICON_PATH.exists() else "📊",
@@ -84,10 +97,9 @@ def chart_monthly(monthly: pd.DataFrame, symbol: str) -> go.Figure:
         )
     )
     fig.update_layout(
-        title="Ventas netas por mes",
         yaxis_title=f"Ventas netas ({symbol})",
         showlegend=False,
-        margin=dict(t=50, b=10),
+        margin=dict(t=10, b=10),
     )
     return fig
 
@@ -96,12 +108,7 @@ def chart_top_products(top: pd.DataFrame, by: str, symbol: str) -> go.Figure:
     top = top.iloc[::-1]  # el mayor arriba
     label = f"Ventas netas ({symbol})" if by == "sales" else "Unidades netas"
     fig = go.Figure(go.Bar(x=top[by], y=top["product"], orientation="h", marker_color=VIOLET))
-    fig.update_layout(
-        title="Top de productos",
-        xaxis_title=label,
-        margin=dict(t=50, b=10, l=10),
-        height=430,
-    )
+    fig.update_layout(xaxis_title=label, margin=dict(t=10, b=10, l=10), height=430)
     return fig
 
 
@@ -112,22 +119,13 @@ def chart_customers(nr: pd.DataFrame) -> go.Figure:
             go.Bar(x=nr["month"], y=nr["new_customers"], name="Nuevos", marker_color=CORAL),
         ]
     )
-    fig.update_layout(
-        title="Clientes activos por mes: nuevos y recurrentes",
-        barmode="stack",
-        legend=dict(orientation="h", y=1.12),
-        margin=dict(t=70, b=10),
-    )
+    fig.update_layout(barmode="stack", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), margin=dict(t=40, b=10))
     return fig
 
 
 def chart_countries(countries: pd.DataFrame, symbol: str) -> go.Figure:
     fig = go.Figure(go.Bar(x=countries["country"], y=countries["sales"], marker_color=VIOLET))
-    fig.update_layout(
-        title="Ventas netas por país",
-        yaxis_title=f"Ventas netas ({symbol})",
-        margin=dict(t=50, b=10),
-    )
+    fig.update_layout(yaxis_title=f"Ventas netas ({symbol})", margin=dict(t=10, b=10))
     return fig
 
 
@@ -138,13 +136,7 @@ def chart_segments(summary: pd.DataFrame) -> go.Figure:
             go.Bar(x=summary["segment"], y=summary["sales_share"] * 100, name="% de las ventas", marker_color=VIOLET),
         ]
     )
-    fig.update_layout(
-        title="Peso de cada segmento: clientes frente a ventas",
-        barmode="group",
-        yaxis_title="%",
-        legend=dict(orientation="h", y=1.12),
-        margin=dict(t=70, b=10),
-    )
+    fig.update_layout(barmode="group", yaxis_title="%", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), margin=dict(t=40, b=10))
     return fig
 
 
@@ -160,9 +152,19 @@ def chart_groups(result: pd.DataFrame, symbol: str) -> go.Figure:
                 marker=dict(size=5, opacity=0.6),
             )
         )
-    fig.update_xaxes(type="log", title="Pedidos por cliente (escala logarítmica)")
-    fig.update_yaxes(type="log", title=f"Valor neto ({symbol}, escala logarítmica)")
-    fig.update_layout(title="Clientes por grupo", margin=dict(t=50, b=10))
+    fig.update_xaxes(
+        type="log",
+        title="Pedidos por cliente (escala logarítmica)",
+        tickvals=[1, 2, 5, 10, 20, 50, 100],
+        ticktext=["1", "2", "5", "10", "20", "50", "100"],
+    )
+    fig.update_yaxes(
+        type="log",
+        title=f"Valor neto ({symbol}, escala logarítmica)",
+        tickvals=[10, 100, 1000, 10000, 100000],
+        ticktext=["10", "100", "1.000", "10.000", "100.000"],
+    )
+    fig.update_layout(margin=dict(t=10, b=10))
     return fig
 
 
@@ -202,12 +204,7 @@ def chart_forecast(result: "forecast.ForecastResult", symbol: str) -> go.Figure:
                 marker=dict(symbol="x", size=11, color=TEAL),
             )
         )
-    fig.update_layout(
-        title="Ventas netas mensuales y previsión",
-        yaxis_title=f"Ventas netas ({symbol})",
-        legend=dict(orientation="h", y=1.15),
-        margin=dict(t=80, b=10),
-    )
+    fig.update_layout(yaxis_title=f"Ventas netas ({symbol})", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), margin=dict(t=40, b=10))
     return fig
 
 
@@ -245,7 +242,13 @@ with st.sidebar:
     if source == SOURCE_UPLOAD:
         uploaded = st.file_uploader("Archivo CSV", type="csv")
         dayfirst = st.checkbox("Las fechas tienen el día primero (31/01/2025)", value=True)
-    symbol = st.text_input("Moneda", value="£" if source == SOURCE_SAMPLE else "€", key=f"currency_{source}")
+    symbol = st.selectbox(
+        "Moneda",
+        list(CURRENCIES),
+        index=list(CURRENCIES).index("£" if source == SOURCE_SAMPLE else "€"),
+        format_func=CURRENCIES.get,
+        key=f"currency_{source}",
+    )
     st.caption("Los archivos se procesan en memoria y no se guardan en disco.")
 
 if source == SOURCE_SAMPLE:
@@ -329,6 +332,7 @@ tab_sales, tab_forecast, tab_products, tab_customers, tab_segments, tab_countrie
 )
 
 with tab_sales:
+    st.markdown("##### Ventas netas por mes")
     st.plotly_chart(chart_monthly(monthly, symbol), width="stretch")
 
 with tab_forecast:
@@ -356,6 +360,7 @@ with tab_forecast:
             if result.improvement is not None:
                 cols[2].metric("Reducción del error", percent(max(result.improvement, 0.0)), border=True)
 
+        st.markdown("##### Ventas netas mensuales y previsión")
         st.plotly_chart(chart_forecast(result, symbol), width="stretch")
 
         if not incomplete.empty and result.forecast["month"].iloc[0] == incomplete.iloc[-1]:
@@ -408,6 +413,7 @@ with tab_products:
         by_label = st.radio("Ordenar por", ["Importe", "Unidades"], horizontal=True)
         by = "sales" if by_label == "Importe" else "units"
         top = metrics.top_products(df, n=10, by=by)
+        st.markdown("##### Top de productos")
         st.plotly_chart(chart_top_products(top, by, symbol), width="stretch")
         st.dataframe(top, hide_index=True, width="stretch")
     except ValueError as error:
@@ -416,8 +422,10 @@ with tab_products:
 with tab_customers:
     try:
         nr = metrics.new_vs_returning(df)
+        nr = nr[nr["month"].isin(monthly.loc[monthly["complete"], "month"])]
+        st.markdown("##### Clientes activos por mes: nuevos y recurrentes")
         st.plotly_chart(chart_customers(nr), width="stretch")
-        st.caption("El primer mes de los datos no se muestra: todos los clientes parecerían nuevos.")
+        st.caption("No se muestran el primer mes (todos los clientes parecerían nuevos) ni los meses incompletos.")
     except ValueError as error:
         st.info(str(error))
 
@@ -439,6 +447,7 @@ with tab_segments:
             "y su frecuencia (F); 5 es el 20 % mejor."
             + (f" Se excluyen {integer(excluded)} clientes que devolvieron más de lo que compraron." if excluded else "")
         )
+        st.markdown("##### Peso de cada segmento: clientes frente a ventas")
         st.plotly_chart(chart_segments(summary), width="stretch")
 
         shown = pd.DataFrame(
@@ -485,6 +494,7 @@ with tab_segments:
                     f"Coeficiente de silueta: {silhouette:.2f}".replace(".", ",")
                     + " (de -1 a 1; cuanto más alto, más separados están los grupos)."
                 )
+                st.markdown("##### Clientes por grupo")
                 st.plotly_chart(chart_groups(result, symbol), width="stretch")
                 st.dataframe(
                     pd.DataFrame(
@@ -505,6 +515,7 @@ with tab_segments:
 with tab_countries:
     try:
         countries = metrics.sales_by_country(df, n=10)
+        st.markdown("##### Ventas netas por país")
         st.plotly_chart(chart_countries(countries, symbol), width="stretch")
     except ValueError as error:
         st.info(str(error))
