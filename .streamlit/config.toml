@@ -2,4 +2,22 @@
 maxUploadSize = 50
 
 [theme]
-primaryColor = "#1F77B4"
+font = "DM Sans:https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap, sans-serif"
+headingFont = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap, sans-serif"
+headingFontWeights = [700, 700, 700, 600, 600, 600]
+baseRadius = "large"
+buttonRadius = "full"
+metricValueFontWeight = 700
+chartCategoricalColors = ["#6C4DF6", "#E8482A", "#0B8B7C", "#C77D00", "#8F89AD", "#3B82F6"]
+
+[theme.light]
+primaryColor = "#5B3FE8"
+backgroundColor = "#FBF8F3"
+secondaryBackgroundColor = "#F1ECFF"
+textColor = "#1D1B3A"
+
+[theme.dark]
+primaryColor = "#8468FF"
+backgroundColor = "#15132B"
+secondaryBackgroundColor = "#221F45"
+textColor = "#F4F1FF"

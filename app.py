@@ -16,9 +16,18 @@ SAMPLE_PATH = Path(__file__).parent / "data" / "sample_online_retail.csv"
 SOURCE_SAMPLE = "Datos de ejemplo"
 SOURCE_UPLOAD = "Subir mi CSV"
 NO_COLUMN = "(ninguna)"
-BLUE, GREY = "#1F77B4", "#B0B7C3"
+APP_NAME = "Ecommerce Insights"
+TAGLINE = "Convierte el CSV de tu tienda online en decisiones."
 
-st.set_page_config(page_title="Ecommerce Insights", page_icon="📊", layout="wide")
+# Paleta del proyecto (los mismos colores están en .streamlit/config.toml).
+VIOLET, CORAL, TEAL, AMBER, GREY = "#6C4DF6", "#E8482A", "#0B8B7C", "#C77D00", "#8F89AD"
+ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
+
+st.set_page_config(
+    page_title=APP_NAME,
+    page_icon=str(ICON_PATH) if ICON_PATH.exists() else "📊",
+    layout="wide",
+)
 
 
 # ---------------------------------------------------------------- utilidades
@@ -60,7 +69,7 @@ def cached_forecast(monthly: pd.DataFrame, horizon: int):
 
 # ------------------------------------------------------------------ gráficos
 def chart_monthly(monthly: pd.DataFrame, symbol: str) -> go.Figure:
-    colors = [BLUE if ok else GREY for ok in monthly["complete"]]
+    colors = [VIOLET if ok else GREY for ok in monthly["complete"]]
     fig = go.Figure(
         go.Bar(
             x=monthly["month"],
@@ -86,7 +95,7 @@ def chart_monthly(monthly: pd.DataFrame, symbol: str) -> go.Figure:
 def chart_top_products(top: pd.DataFrame, by: str, symbol: str) -> go.Figure:
     top = top.iloc[::-1]  # el mayor arriba
     label = f"Ventas netas ({symbol})" if by == "sales" else "Unidades netas"
-    fig = go.Figure(go.Bar(x=top[by], y=top["product"], orientation="h", marker_color=BLUE))
+    fig = go.Figure(go.Bar(x=top[by], y=top["product"], orientation="h", marker_color=VIOLET))
     fig.update_layout(
         title="Top de productos",
         xaxis_title=label,
@@ -99,8 +108,8 @@ def chart_top_products(top: pd.DataFrame, by: str, symbol: str) -> go.Figure:
 def chart_customers(nr: pd.DataFrame) -> go.Figure:
     fig = go.Figure(
         [
-            go.Bar(x=nr["month"], y=nr["returning_customers"], name="Recurrentes", marker_color=BLUE),
-            go.Bar(x=nr["month"], y=nr["new_customers"], name="Nuevos", marker_color="#FF7F0E"),
+            go.Bar(x=nr["month"], y=nr["returning_customers"], name="Recurrentes", marker_color=VIOLET),
+            go.Bar(x=nr["month"], y=nr["new_customers"], name="Nuevos", marker_color=CORAL),
         ]
     )
     fig.update_layout(
@@ -113,7 +122,7 @@ def chart_customers(nr: pd.DataFrame) -> go.Figure:
 
 
 def chart_countries(countries: pd.DataFrame, symbol: str) -> go.Figure:
-    fig = go.Figure(go.Bar(x=countries["country"], y=countries["sales"], marker_color=BLUE))
+    fig = go.Figure(go.Bar(x=countries["country"], y=countries["sales"], marker_color=VIOLET))
     fig.update_layout(
         title="Ventas netas por país",
         yaxis_title=f"Ventas netas ({symbol})",
@@ -125,8 +134,8 @@ def chart_countries(countries: pd.DataFrame, symbol: str) -> go.Figure:
 def chart_segments(summary: pd.DataFrame) -> go.Figure:
     fig = go.Figure(
         [
-            go.Bar(x=summary["segment"], y=summary["customers_share"] * 100, name="% de clientes", marker_color=GREY),
-            go.Bar(x=summary["segment"], y=summary["sales_share"] * 100, name="% de las ventas", marker_color=BLUE),
+            go.Bar(x=summary["segment"], y=summary["customers_share"] * 100, name="% de clientes", marker_color=TEAL),
+            go.Bar(x=summary["segment"], y=summary["sales_share"] * 100, name="% de las ventas", marker_color=VIOLET),
         ]
     )
     fig.update_layout(
@@ -161,14 +170,14 @@ def chart_forecast(result: "forecast.ForecastResult", symbol: str) -> go.Figure:
     history, fc, test = result.history, result.forecast, result.last_test
     fig = go.Figure()
     fig.add_trace(
-        go.Scatter(x=history.index, y=history.values, name="Ventas reales", mode="lines+markers", line=dict(color=BLUE))
+        go.Scatter(x=history.index, y=history.values, name="Ventas reales", mode="lines+markers", line=dict(color=VIOLET))
     )
     fig.add_trace(
         go.Scatter(
             x=list(fc["month"]) + list(fc["month"][::-1]),
             y=list(fc["upper"]) + list(fc["lower"][::-1]),
             fill="toself",
-            fillcolor="rgba(255,127,14,0.15)",
+            fillcolor="rgba(232,72,42,0.16)",
             line=dict(width=0),
             name="Rango probable (80 %)",
             hoverinfo="skip",
@@ -180,7 +189,7 @@ def chart_forecast(result: "forecast.ForecastResult", symbol: str) -> go.Figure:
             y=[history.iloc[-1]] + list(fc["forecast"]),
             name="Previsión",
             mode="lines+markers",
-            line=dict(color="#FF7F0E", dash="dash"),
+            line=dict(color=CORAL, dash="dash"),
         )
     )
     if not test.empty:
@@ -190,7 +199,7 @@ def chart_forecast(result: "forecast.ForecastResult", symbol: str) -> go.Figure:
                 y=test["predicted"],
                 name="Lo que habría previsto el modelo",
                 mode="markers",
-                marker=dict(symbol="x", size=11, color="#2CA02C"),
+                marker=dict(symbol="x", size=11, color=TEAL),
             )
         )
     fig.update_layout(
@@ -202,12 +211,32 @@ def chart_forecast(result: "forecast.ForecastResult", symbol: str) -> go.Figure:
     return fig
 
 
+def render_header() -> None:
+    logo = (
+        '<svg width="46" height="46" viewBox="0 0 46 46" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+        '<rect width="46" height="46" rx="13" fill="rgba(255,255,255,0.18)"/>'
+        '<rect x="9" y="26" width="7" height="11" rx="2.5" fill="#fff"/>'
+        '<rect x="19.5" y="18" width="7" height="19" rx="2.5" fill="#fff"/>'
+        '<rect x="30" y="9" width="7" height="28" rx="2.5" fill="#FFB627"/></svg>'
+    )
+    st.markdown(
+        f"""
+        <div style="display:flex;align-items:center;gap:1rem;padding:1.1rem 1.4rem;border-radius:1.1rem;
+                    margin-bottom:1rem;color:#fff;
+                    background:linear-gradient(115deg,#4B2FD1 0%,#7A45F0 58%,#E8482A 130%);">
+            {logo}
+            <div>
+                <div style="font-family:inherit;font-weight:700;font-size:1.75rem;line-height:1.15;">{APP_NAME}</div>
+                <div style="opacity:.92;font-size:1rem;">{TAGLINE}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ------------------------------------------------------------- entrada de datos
-st.title("📊 Ecommerce Insights")
-st.write(
-    "Sube el CSV de ventas de tu tienda online y obtén un dashboard de ventas, "
-    "productos y clientes."
-)
+render_header()
 
 with st.sidebar:
     st.header("Datos")
@@ -275,17 +304,18 @@ st.caption(
 )
 
 columns = st.columns(5)
-columns[0].metric("Ventas netas", money(kpis["total_sales"], symbol), help="Compras menos devoluciones.")
+columns[0].metric("Ventas netas", money(kpis["total_sales"], symbol), help="Compras menos devoluciones.", border=True)
 if kpis["last_month"] is not None:
     delta = None if kpis["mom_change"] is None else f"{kpis['mom_change'] * 100:+.1f} % vs mes anterior".replace(".", ",")
     columns[1].metric(
         f"Último mes completo ({kpis['last_month']:%Y-%m})",
         money(kpis["last_month_sales"], symbol),
         delta=delta,
+        border=True,
     )
-columns[2].metric("Pedidos", integer(kpis["orders"]))
-columns[3].metric("Clientes", integer(kpis["customers"]))
-columns[4].metric("Ticket medio", money(kpis["avg_order_value"], symbol), help="Valor medio de un pedido, antes de devoluciones.")
+columns[2].metric("Pedidos", integer(kpis["orders"]), border=True)
+columns[3].metric("Clientes", integer(kpis["customers"]), border=True)
+columns[4].metric("Ticket medio", money(kpis["avg_order_value"], symbol), help="Valor medio de un pedido, antes de devoluciones.", border=True)
 st.caption(f"Devoluciones: {money(kpis['returns'], symbol)}, un {percent(kpis['return_rate'])} de las ventas.")
 
 incomplete = monthly.loc[~monthly["complete"], "month"]
@@ -319,11 +349,12 @@ with tab_forecast:
                 "Error medio de esta previsión",
                 percent(result.best_wape),
                 help="Se calcula previendo los últimos meses como si no se conocieran y comparando con lo que ocurrió.",
+                border=True,
             )
             if result.baseline_wape is not None:
-                cols[1].metric("Error de la media de los últimos 3 meses", percent(result.baseline_wape))
+                cols[1].metric("Error de la media de los últimos 3 meses", percent(result.baseline_wape), border=True)
             if result.improvement is not None:
-                cols[2].metric("Reducción del error", percent(max(result.improvement, 0.0)))
+                cols[2].metric("Reducción del error", percent(max(result.improvement, 0.0)), border=True)
 
         st.plotly_chart(chart_forecast(result, symbol), width="stretch")
 
